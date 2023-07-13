@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\PasswordReset as ModelsPasswordReset;
+use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -16,14 +19,18 @@ class NewPasswordController extends Controller
         $request->validate([
             'email' => 'required|email',
         ]);
+        $email = ModelsPasswordReset::where("email", $request->email)->first();
+        if ($email) {
+            $email->update(["token" => Str::random(60)]);
+        } else {
 
-        Password::sendResetLink(
-            $request->only('email')
-        );
+            ModelsPasswordReset::create([
+                'email'     => $request->email,
+                'token'     => Str::random(60),
+            ]);
+        }
 
-        return Password::RESET_LINK_SENT
-            ? response()->json(['status' => 'Success', 'message' => 'Reset Password Link Sent'], 201)
-            : response()->json(['status' => 'Fail', 'message' => 'Reset Link Could Not Be Sent'], 401);
+        return response()->json(['status' => 'Success', 'data' => ModelsPasswordReset::find($request->email)], 201);
     }
     public function reset(Request $request)
     {
@@ -31,6 +38,7 @@ class NewPasswordController extends Controller
             'token' => 'required',
             'email' => 'required|email',
             'password' => 'required|min:8',
+            'confirm_password' => 'required|min:8',
 
         ]);
         if ($validator->fails()) {
@@ -38,28 +46,19 @@ class NewPasswordController extends Controller
                 'errors' => $validator->errors()
             ], 406);
         }
-        $status = Password::reset(
-            $request->only('email', 'password', 'confirm_password', 'token'),
-            function ($user) use ($request) {
-                $user->forceFill([
-                    'password' => Hash::make($request->password),
-                    'remember_token' => Str::random(60),
-                ])->save();
+        $passRes = ModelsPasswordReset::find($request->email);
 
-                $user->tokens()->delete();
-
-                event(new PasswordReset($user));
-            }
-        );
-
-        if ($status == Password::PASSWORD_RESET) {
-            return response([
-                'message' => 'Password reset successfully'
-            ]);
+        if ($passRes->token == $request->token) {
+            $user = User::where("email", $passRes->email)->first();
+            $user->update(["password" => $request->password]);
+            return response()->json(["success" => true, "message" => "Successfully updated password"]);
+        } else {
+            return response()->json(["success" => false, "message" => "Invalid token"], 401);
         }
 
+
         return response([
-            'message' => __($status)
+            'message' => "Error"
         ], 500);
     }
 }
